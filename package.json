@@ -1,0 +1,29 @@
+{
+  "name": "registro-actopan",
+  "private": true,
+  "type": "module",
+  "description": "Registro híbrido y validación QR de un solo uso para evento en Actopan, Hidalgo.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "install:all": "npm install --prefix server && npm install --prefix client",
+    "dev": "concurrently -n api,web -c green,blue \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "dev:https": "concurrently -n api,web -c green,blue \"npm run dev --prefix server\" \"npm run dev:https --prefix client\"",
+    "build": "npm run build --prefix client",
+    "start": "npm run start --prefix server",
+    "test": "npm test --prefix server"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.1",
+    "helmet": "^8.1.0",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
