@@ -22,18 +22,22 @@ function useOnline() {
 
 const CORNER_CLASSES = {
   "top-left":
-    "-top-8 -left-8 sm:-top-10 sm:-left-10 md:-top-12 md:-left-12 lg:-top-16 lg:-left-16 xl:-top-20 xl:-left-20",
+    "-top-6 -left-6 sm:-top-10 sm:-left-10 md:-top-12 md:-left-12 lg:-top-16 lg:-left-16 xl:-top-20 xl:-left-20",
+  "top-right":
+    "-top-6 -right-6 sm:-top-10 sm:-right-10 md:-top-12 md:-right-12 lg:-top-16 lg:-right-16 xl:-top-20 xl:-right-20",
   "bottom-right":
-    "-right-8 -bottom-8 sm:-right-10 sm:-bottom-10 md:-right-12 md:-bottom-12 lg:-right-16 lg:-bottom-16 xl:-right-20 xl:-bottom-20",
+    "-right-6 -bottom-6 sm:-right-10 sm:-bottom-10 md:-right-12 md:-bottom-12 lg:-right-16 lg:-bottom-16 xl:-right-20 xl:-bottom-20",
 };
 
 const OPPOSITE_CORNER = {
   "top-left": "bottom-right",
+  "top-right": "top-left",
   "bottom-right": "top-left",
 };
 
-function DraggableChalupa({ id, initialCorner, src, alt }) {
-  const [corner, setCorner] = useState(initialCorner);
+function DraggableChalupa({ id, cornerKey, initialCorner, src, alt }) {
+  const activeCorner = cornerKey || initialCorner;
+  const [corner, setCorner] = useState(activeCorner);
   const [hiddenUntil, setHiddenUntil] = useState(0);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
 
@@ -48,6 +52,11 @@ function DraggableChalupa({ id, initialCorner, src, alt }) {
   const timerRef = useRef(null);
 
   useEffect(() => {
+    setCorner(activeCorner);
+    setOffset({ x: 0, y: 0 });
+  }, [activeCorner]);
+
+  useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
@@ -57,18 +66,18 @@ function DraggableChalupa({ id, initialCorner, src, alt }) {
     if (!hiddenUntil) return;
     const remaining = hiddenUntil - Date.now();
     if (remaining <= 0) {
-      setCorner((prev) => OPPOSITE_CORNER[prev] || initialCorner);
+      setCorner((prev) => OPPOSITE_CORNER[prev] || activeCorner);
       setOffset({ x: 0, y: 0 });
       setHiddenUntil(0);
       return;
     }
     const t = setTimeout(() => {
-      setCorner((prev) => OPPOSITE_CORNER[prev] || initialCorner);
+      setCorner((prev) => OPPOSITE_CORNER[prev] || activeCorner);
       setOffset({ x: 0, y: 0 });
       setHiddenUntil(0);
     }, remaining);
     return () => clearTimeout(t);
-  }, [hiddenUntil, initialCorner]);
+  }, [hiddenUntil, activeCorner]);
 
   const isHidden = hiddenUntil > Date.now();
 
@@ -79,7 +88,7 @@ function DraggableChalupa({ id, initialCorner, src, alt }) {
       const targetTime = Date.now() + 60_000;
       setHiddenUntil(targetTime);
       timerRef.current = setTimeout(() => {
-        setCorner((prev) => OPPOSITE_CORNER[prev] || initialCorner);
+        setCorner((prev) => OPPOSITE_CORNER[prev] || activeCorner);
         setOffset({ x: 0, y: 0 });
         setHiddenUntil(0);
       }, 60_000);
@@ -137,7 +146,7 @@ function DraggableChalupa({ id, initialCorner, src, alt }) {
       style={{
         transform: `translate3d(${offset.x}px, ${offset.y}px, 0)`,
       }}
-      className={`pointer-events-auto fixed z-20 w-24 cursor-grab touch-none select-none object-contain drop-shadow-[0_12px_20px_rgba(74,18,34,0.2)] active:cursor-grabbing sm:w-40 md:w-56 lg:w-80 xl:w-96 2xl:w-[27rem] ${CORNER_CLASSES[corner]}`}
+      className={`pointer-events-auto fixed z-20 w-28 cursor-grab touch-none select-none object-contain drop-shadow-[0_12px_20px_rgba(74,18,34,0.2)] active:cursor-grabbing sm:w-44 md:w-56 lg:w-80 xl:w-96 2xl:w-[27rem] ${CORNER_CLASSES[corner]}`}
     />
   );
 }
@@ -172,10 +181,13 @@ export default function Shell({ title, wide = false, children }) {
   }, []);
 
   if (isPublic) {
+    const secondCorner = isRegisterForm ? "top-right" : "bottom-right";
+
     return (
-      <div className="relative flex h-dvh w-full items-center justify-center overflow-hidden px-3 py-3 text-ink sm:px-4 sm:py-4">
+      <div className="relative flex min-h-dvh w-full items-center justify-center overflow-x-clip px-3 py-5 text-ink sm:px-4 sm:py-6">
         <DraggableChalupa
           id="chalupa-1"
+          cornerKey="top-left"
           initialCorner="top-left"
           src="/ch.png"
           alt="Chalupa tradicional de Actopan"
@@ -183,28 +195,29 @@ export default function Shell({ title, wide = false, children }) {
 
         <DraggableChalupa
           id="chalupa-2"
-          initialCorner="bottom-right"
+          cornerKey={secondCorner}
+          initialCorner={secondCorner}
           src="/ch.png"
           alt="Chalupa con salsa verde, pollo y queso"
         />
 
-        <main className="relative z-10 mx-auto flex w-full max-w-md min-w-0 flex-col items-center justify-center gap-2 sm:gap-3.5 md:gap-4">
+        <main className="relative z-10 mx-auto flex w-full max-w-md min-w-0 flex-col items-center justify-center gap-3 sm:gap-4">
           <img
             src="/LOGO.png"
             alt="1º Festival y Concurso de la Chalupa 2026"
-            className="w-40 max-w-[65vw] object-contain sm:w-60 md:w-72 lg:w-80"
+            className="w-44 max-w-[68vw] shrink-0 object-contain sm:w-64 md:w-72 lg:w-80"
           />
 
           <img
             src="/FRASE.png"
             alt="Orgullo actopense en cada bocado"
-            className="w-44 max-w-[70vw] object-contain sm:w-64 md:w-76 lg:w-84"
+            className="w-48 max-w-[74vw] shrink-0 object-contain sm:w-68 md:w-76 lg:w-84"
           />
 
           <div
             className={
               isRegisterForm
-                ? "w-full max-w-md min-w-0 rounded-3xl border border-line bg-[#fffdf8]/95 p-3.5 shadow-[0_18px_36px_rgba(74,18,34,0.16)] sm:p-5 [&>div]:min-w-0 [&>div]:max-w-full [&_button[type='submit']]:w-full [&_button[type='submit']]:max-w-full [&_button[type='submit']]:bg-pine [&_button[type='submit']]:text-white [&_button[type='submit']]:hover:bg-pine-dark [&_input]:w-full [&_input]:min-w-0 [&_input]:max-w-full [&_input]:border-line [&_input]:bg-white [&_input]:text-ink [&_label]:font-medium [&_label]:text-pine-dark [&_select]:w-full [&_select]:min-w-0 [&_select]:max-w-full [&_select]:border-line [&_select]:bg-white [&_select]:text-ink"
+                ? "w-full max-w-md min-w-0 rounded-3xl border border-line bg-[#fffdf8]/95 p-4 shadow-[0_18px_36px_rgba(74,18,34,0.16)] sm:p-5 [&>div]:min-w-0 [&>div]:max-w-full [&_button[type='submit']]:w-full [&_button[type='submit']]:max-w-full [&_button[type='submit']]:bg-pine [&_button[type='submit']]:text-white [&_button[type='submit']]:hover:bg-pine-dark [&_input]:w-full [&_input]:min-w-0 [&_input]:max-w-full [&_input]:border-line [&_input]:bg-white [&_input]:text-ink [&_label]:font-medium [&_label]:text-pine-dark [&_select]:w-full [&_select]:min-w-0 [&_select]:max-w-full [&_select]:border-line [&_select]:bg-white [&_select]:text-ink"
                 : "font-bebas w-full max-w-[19rem] min-w-0 rounded-3xl bg-pine shadow-[0_18px_36px_rgba(74,18,34,0.24)] sm:max-w-[21rem] [&>div]:bg-transparent [&>div]:p-5 [&>div]:shadow-none sm:[&>div]:p-6 [&_a]:tracking-wider [&_button]:tracking-wider [&_h1]:tracking-wide [&_h2]:tracking-wide"
             }
           >
