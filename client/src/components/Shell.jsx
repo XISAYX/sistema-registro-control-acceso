@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { roleLabel, staffLabel } from "@shared/validate.js";
@@ -18,6 +18,128 @@ function useOnline() {
     };
   }, []);
   return online;
+}
+
+const CORNER_CLASSES = {
+  "top-left":
+    "-top-8 -left-8 sm:-top-10 sm:-left-10 md:-top-12 md:-left-12 lg:-top-16 lg:-left-16 xl:-top-20 xl:-left-20",
+  "bottom-right":
+    "-right-8 -bottom-8 sm:-right-10 sm:-bottom-10 md:-right-12 md:-bottom-12 lg:-right-16 lg:-bottom-16 xl:-right-20 xl:-bottom-20",
+};
+
+const OPPOSITE_CORNER = {
+  "top-left": "bottom-right",
+  "bottom-right": "top-left",
+};
+
+function DraggableChalupa({ id, initialCorner, src, alt }) {
+  const [corner, setCorner] = useState(initialCorner);
+  const [hiddenUntil, setHiddenUntil] = useState(0);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+
+  const dragStateRef = useRef({
+    dragging: false,
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+    baseX: 0,
+    baseY: 0,
+  });
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hiddenUntil) return;
+    const remaining = hiddenUntil - Date.now();
+    if (remaining <= 0) {
+      setCorner((prev) => OPPOSITE_CORNER[prev] || initialCorner);
+      setOffset({ x: 0, y: 0 });
+      setHiddenUntil(0);
+      return;
+    }
+    const t = setTimeout(() => {
+      setCorner((prev) => OPPOSITE_CORNER[prev] || initialCorner);
+      setOffset({ x: 0, y: 0 });
+      setHiddenUntil(0);
+    }, remaining);
+    return () => clearTimeout(t);
+  }, [hiddenUntil, initialCorner]);
+
+  const isHidden = hiddenUntil > Date.now();
+
+  function handlePointerDown(event) {
+    if (event.pointerType === "touch") {
+      event.preventDefault();
+      if (timerRef.current) clearTimeout(timerRef.current);
+      const targetTime = Date.now() + 60_000;
+      setHiddenUntil(targetTime);
+      timerRef.current = setTimeout(() => {
+        setCorner((prev) => OPPOSITE_CORNER[prev] || initialCorner);
+        setOffset({ x: 0, y: 0 });
+        setHiddenUntil(0);
+      }, 60_000);
+      return;
+    }
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragStateRef.current = {
+      dragging: true,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      baseX: offset.x,
+      baseY: offset.y,
+    };
+  }
+
+  function handlePointerMove(event) {
+    const state = dragStateRef.current;
+    if (!state.dragging || state.pointerId !== event.pointerId) return;
+    const dx = event.clientX - state.startX;
+    const dy = event.clientY - state.startY;
+    setOffset({
+      x: state.baseX + dx,
+      y: state.baseY + dy,
+    });
+  }
+
+  function handlePointerUp(event) {
+    const state = dragStateRef.current;
+    if (state.dragging && state.pointerId === event.pointerId) {
+      state.dragging = false;
+      state.pointerId = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    }
+  }
+
+  if (isHidden) {
+    return null;
+  }
+
+  return (
+    <img
+      key={`${id}-${corner}`}
+      src={src}
+      alt={alt}
+      draggable={false}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      style={{
+        transform: `translate3d(${offset.x}px, ${offset.y}px, 0)`,
+      }}
+      className={`pointer-events-auto fixed z-20 w-24 cursor-grab touch-none select-none object-contain drop-shadow-[0_12px_20px_rgba(74,18,34,0.2)] active:cursor-grabbing sm:w-40 md:w-56 lg:w-80 xl:w-96 2xl:w-[27rem] ${CORNER_CLASSES[corner]}`}
+    />
+  );
 }
 
 export default function Shell({ title, wide = false, children }) {
@@ -51,37 +173,39 @@ export default function Shell({ title, wide = false, children }) {
 
   if (isPublic) {
     return (
-      <div className="relative min-h-dvh overflow-x-clip px-4 py-6 text-ink">
-        <img
-          src="/chalupa.png"
+      <div className="relative flex h-dvh w-full items-center justify-center overflow-hidden px-3 py-3 text-ink sm:px-4 sm:py-4">
+        <DraggableChalupa
+          id="chalupa-1"
+          initialCorner="top-left"
+          src="/ch.png"
           alt="Chalupa tradicional de Actopan"
-          className="pointer-events-none fixed -top-8 -left-8 z-0 w-28 rounded-full object-cover drop-shadow-[0_12px_20px_rgba(74,18,34,0.2)] sm:w-36 md:-top-10 md:-left-10 md:w-48 lg:-top-12 lg:-left-12 lg:w-64 xl:w-72"
         />
 
-        <img
-          src="/chalupa2.png"
+        <DraggableChalupa
+          id="chalupa-2"
+          initialCorner="bottom-right"
+          src="/ch.png"
           alt="Chalupa con salsa verde, pollo y queso"
-          className="pointer-events-none fixed -right-8 -bottom-8 z-0 w-28 rounded-full object-cover drop-shadow-[0_12px_20px_rgba(74,18,34,0.2)] sm:w-36 md:-right-10 md:-bottom-10 md:w-48 lg:-right-12 lg:-bottom-12 lg:w-64 xl:w-72"
         />
 
-        <main className="relative z-10 mx-auto flex min-h-[calc(100dvh-3rem)] w-full max-w-md flex-col items-center justify-center gap-4 pt-12 pb-12 md:gap-5 md:py-4">
+        <main className="relative z-10 mx-auto flex w-full max-w-md min-w-0 flex-col items-center justify-center gap-2 sm:gap-3.5 md:gap-4">
           <img
             src="/LOGO.png"
             alt="1º Festival y Concurso de la Chalupa 2026"
-            className="w-52 max-w-[72vw] object-contain sm:w-64 md:w-72"
+            className="w-40 max-w-[65vw] object-contain sm:w-60 md:w-72 lg:w-80"
           />
 
           <img
             src="/FRASE.png"
             alt="Orgullo actopense en cada bocado"
-            className="w-56 max-w-[78vw] object-contain sm:w-64 md:w-72"
+            className="w-44 max-w-[70vw] object-contain sm:w-64 md:w-76 lg:w-84"
           />
 
           <div
             className={
               isRegisterForm
-                ? "w-full max-w-md rounded-3xl border border-line bg-[#fffdf8]/95 p-5 shadow-[0_18px_36px_rgba(74,18,34,0.16)] [&_button[type='submit']]:bg-pine [&_button[type='submit']]:text-white [&_button[type='submit']]:hover:bg-pine-dark [&_input]:border-line [&_input]:bg-white [&_input]:text-ink [&_label]:font-medium [&_label]:text-pine-dark [&_select]:border-line [&_select]:bg-white [&_select]:text-ink"
-                : "w-full max-w-sm rounded-3xl bg-pine shadow-[0_18px_36px_rgba(74,18,34,0.24)] [&>div]:bg-transparent [&>div]:shadow-none"
+                ? "w-full max-w-md min-w-0 rounded-3xl border border-line bg-[#fffdf8]/95 p-3.5 shadow-[0_18px_36px_rgba(74,18,34,0.16)] sm:p-5 [&>div]:min-w-0 [&>div]:max-w-full [&_button[type='submit']]:w-full [&_button[type='submit']]:max-w-full [&_button[type='submit']]:bg-pine [&_button[type='submit']]:text-white [&_button[type='submit']]:hover:bg-pine-dark [&_input]:w-full [&_input]:min-w-0 [&_input]:max-w-full [&_input]:border-line [&_input]:bg-white [&_input]:text-ink [&_label]:font-medium [&_label]:text-pine-dark [&_select]:w-full [&_select]:min-w-0 [&_select]:max-w-full [&_select]:border-line [&_select]:bg-white [&_select]:text-ink"
+                : "font-bebas w-full max-w-[19rem] min-w-0 rounded-3xl bg-pine shadow-[0_18px_36px_rgba(74,18,34,0.24)] sm:max-w-[21rem] [&>div]:bg-transparent [&>div]:p-5 [&>div]:shadow-none sm:[&>div]:p-6 [&_a]:tracking-wider [&_button]:tracking-wider [&_h1]:tracking-wide [&_h2]:tracking-wide"
             }
           >
             {children}
