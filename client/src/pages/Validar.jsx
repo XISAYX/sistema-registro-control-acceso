@@ -4,10 +4,8 @@ import Shell from "../components/Shell.jsx";
 import StaffGate from "../components/StaffGate.jsx";
 import BackupButtons from "../components/BackupButtons.jsx";
 import { db } from "../db/localDb.js";
-import * as apiModule from "../lib/api.js";
-import * as staffModule from "../lib/staff.js";
-
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8787";
+import { api } from "../lib/api.js";
+import { getStaffSession } from "../lib/staff.js";
 
 class ValidarErrorBoundary extends Component {
   constructor(props) {
@@ -42,134 +40,53 @@ class ValidarErrorBoundary extends Component {
   }
 }
 
-function resolveStaffProfile() {
-  const candidates = [
-    staffModule.getStaffProfile,
-    staffModule.getActiveStaff,
-    staffModule.getCurrentStaff,
-    staffModule.getStaffSession,
-    staffModule.getStaff,
-    staffModule.readStaffSession,
-    staffModule.default,
-  ];
-
-  for (const fn of candidates) {
-    if (typeof fn === "function") {
-      try {
-        const res = fn();
-        if (res && typeof res === "object") return res;
-      } catch {
-        // Continúa probando el siguiente candidato
-      }
-    }
-  }
-
-  for (const key of [
-    "staff_session",
-    "staffProfile",
-    "staff_profile",
-    "staff",
-    "activeStaff",
-  ]) {
-    try {
-      const raw = window.localStorage.getItem(key);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === "object") return parsed;
-      }
-    } catch {
-      // Continúa probando la siguiente clave
-    }
-  }
-
-  return null;
-}
-
-async function resolveValidateRequest(code, validatorLabel, staff) {
-  const payload = {
-    qr_code: code,
-    qrCode: code,
-    code,
-    validated_by: validatorLabel,
-    validatedBy: validatorLabel,
-    staff_slot: staff?.slot ?? staff?.staff_slot ?? null,
-    staff_name: staff?.name ?? staff?.staff_name ?? null,
-  };
-
-  const fnCandidates = [
-    apiModule.validateQr,
-    apiModule.validateQR,
-    apiModule.verifyQr,
-    apiModule.verifyQR,
-    apiModule.checkInQr,
-    apiModule.checkIn,
-    apiModule.postValidateQr,
-  ];
-
-  for (const fn of fnCandidates) {
-    if (typeof fn === "function") {
-      const result = await fn(payload);
-      if (result && typeof result.json === "function") {
-        return { ok: result.ok, data: await result.json() };
-      }
-      return { ok: true, data: result };
-    }
-  }
-
-  const customFetch =
-    apiModule.apiFetch ||
-    apiModule.request ||
-    apiModule.http ||
-    apiModule.fetcher ||
-    (typeof apiModule.default === "function" ? apiModule.default : null);
-
-  if (typeof customFetch === "function") {
-    const result = await customFetch("/api/validate-qr", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+function formatHoraMx(isoString) {
+  if (!isoString) return "hora registrada";
+  try {
+    return new Date(isoString).toLocaleString("es-MX", {
+      timeZone: "America/Mexico_City",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
     });
-    if (result && typeof result.json === "function") {
-      return { ok: result.ok, data: await result.json() };
-    }
-    return { ok: true, data: result };
+  } catch {
+    return new Date(isoString).toLocaleTimeString();
   }
-
-  const res = await fetch(`${API_BASE}/api/validate-qr`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const data = await res.json();
-  return { ok: res.ok, data };
 }
 
 function ValidarContent() {
   const [status, setStatus] = useState(null);
   const [scanning, setScanning] = useState(false);
+  const [processing, setProcessing] = useState(false);
   const [cameraError, setCameraError] = useState("");
-  const lastScanRef = useRef({ code: "", time: 0 });
+
+  // Mantiene fijado el último QR leído en pantalla hasta que entre un QR distinto
+  // o el staff pulse "Volver a verificar este QR" / "Limpiar pantalla".
+  const activeQrRef = useRef("");
+  const inFlightRef = useRef(false);
   const scannerRef = useRef(null);
 
-  async function handleDecode(decodedText) {
-    const code = decodedText.trim();
-    if (!code) return;
+  async function processQr(rawCode, { forceRevalidate = false } = {}) {
+    const code = String(rawCode || "")
+      .trim()
+      .toLowerCase();
+    if (!code || inFlightRef.current) return;
 
-    const now = Date.now();
-    if (
-      code === lastScanRef.current.code &&
-      now - lastScanRef.current.time < 2500
-    ) {
+    if (!forceRevalidate && code === activeQrRef.current) {
       return;
     }
-    lastScanRef.current = { code, time: now };
 
-    const staff = resolveStaffProfile();
-    const validatorLabel = staff
-      ? `${staff.slot || staff.role || "Staff"} - ${
-          staff.name || staff.staff_name || "Validador"
-        }`
-      : "Staff Validador";
+    inFlightRef.current = true;
+    activeQrRef.current = code;
+    setProcessing(true);
+
+    const session = getStaffSession();
+    const staffSlot = session?.staff_slot || "Staff 1";
+    const staffFullName = session?.staff_full_name || "Validador";
+    const validatorLabel = session?.label || `${staffSlot} - ${staffFullName}`;
 
     let cached = null;
     try {
@@ -178,80 +95,155 @@ function ValidarContent() {
       cached = null;
     }
 
-    if (cached && cached.checked_in) {
-      setStatus({
-        type: "error",
-        title: "ERROR: ESTE CÓDIGO QR YA FUE USADO",
-        attendee: cached,
-        detail: `Escaneado previamente por ${
-          cached.validated_by || "otro staff"
-        } (${
-          cached.checked_in_at
-            ? new Date(cached.checked_in_at).toLocaleTimeString()
-            : "hora registrada"
-        })`,
-      });
-      return;
-    }
-
     try {
-      const { ok, data } = await resolveValidateRequest(
-        code,
-        validatorLabel,
-        staff,
-      );
+      const data = await api("/api/validate-qr", {
+        method: "POST",
+        staff: true,
+        body: {
+          qr_code: code,
+          staff_slot: staffSlot,
+          staff_full_name: staffFullName,
+          staff_role: "validador",
+        },
+      });
 
-      if (!ok || data?.alreadyUsed) {
-        if (data?.attendee && db?.attendeesCache) {
+      const attendee = data?.attendee || cached;
+      if (attendee && db?.attendeesCache) {
+        await db.attendeesCache
+          .put({
+            ...attendee,
+            checked_in: true,
+            checked_in_at: data?.checked_in_at || attendee.checked_in_at,
+            validated_by: data?.validated_by || attendee.validated_by,
+          })
+          .catch(() => {});
+      }
+
+      const who =
+        data?.validated_by || attendee?.validated_by || validatorLabel;
+      const when =
+        data?.checked_in_at_mx ||
+        formatHoraMx(data?.checked_in_at || attendee?.checked_in_at);
+
+      setStatus({
+        tone: "green",
+        qrCode: code,
+        title: data?.message || "ACCESO PERMITIDO",
+        attendee,
+        validatedBy: who,
+        validatedAt: when,
+        attempts: 1,
+        detail: `Validado por ${who} · ${when}`,
+      });
+    } catch (err) {
+      const payload = err?.data || err?.response || {};
+      const attendee = payload?.attendee || cached;
+      const statusCode = err?.status;
+
+      if (statusCode === 409 || payload?.alreadyUsed) {
+        const attempts = Number(payload?.attempts || 2);
+        const tone =
+          payload?.statusColor === "red" || attempts > 3 ? "red" : "yellow";
+        const who =
+          payload?.validated_by || attendee?.validated_by || "Otro staff";
+        const when =
+          payload?.checked_in_at_mx ||
+          formatHoraMx(payload?.checked_in_at || attendee?.checked_in_at);
+
+        if (attendee && db?.attendeesCache) {
           await db.attendeesCache
-            .put({ ...data.attendee, checked_in: true })
+            .put({
+              ...attendee,
+              checked_in: true,
+              checked_in_at: payload?.checked_in_at || attendee.checked_in_at,
+              validated_by: who,
+            })
             .catch(() => {});
         }
+
         setStatus({
-          type: "error",
-          title: "ERROR: ESTE CÓDIGO QR YA FUE USADO",
-          attendee: data?.attendee || cached,
-          detail: data?.message || "Acceso denegado: boleto duplicado.",
+          tone,
+          qrCode: code,
+          title:
+            payload?.message ||
+            (tone === "red"
+              ? `ALERTA: MÁS DE 3 INTENTOS (${attempts} ESCANEOS)`
+              : `ESTE CÓDIGO QR YA FUE VALIDADO (INTENTO ${attempts} DE 3)`),
+          attendee,
+          validatedBy: who,
+          validatedAt: when,
+          attempts,
+          detail: `Validado por ${who} · ${when}`,
         });
         return;
       }
 
-      if (data?.attendee && db?.attendeesCache) {
-        await db.attendeesCache
-          .put({ ...data.attendee, checked_in: true })
-          .catch(() => {});
+      if (err?.network && cached) {
+        if (cached.checked_in) {
+          const nextAttempts = (cached._local_attempts || 1) + 1;
+          const tone = nextAttempts > 3 ? "red" : "yellow";
+          const who = cached.validated_by || "Staff previo";
+          const when = formatHoraMx(cached.checked_in_at);
+          await db.attendeesCache
+            .put({ ...cached, _local_attempts: nextAttempts })
+            .catch(() => {});
+
+          setStatus({
+            tone,
+            qrCode: code,
+            title:
+              tone === "red"
+                ? `ALERTA OFFLINE: ${nextAttempts} INTENTOS`
+                : `ESTE CÓDIGO QR YA FUE VALIDADO (INTENTO ${nextAttempts} DE 3)`,
+            attendee: cached,
+            validatedBy: who,
+            validatedAt: when,
+            attempts: nextAttempts,
+            detail: `Validado por ${who} · ${when}`,
+          });
+        } else {
+          const nowIso = new Date().toISOString();
+          const updated = {
+            ...cached,
+            checked_in: true,
+            checked_in_at: nowIso,
+            validated_by: validatorLabel,
+            _local_attempts: 1,
+          };
+          await db.attendeesCache.put(updated).catch(() => {});
+          const when = formatHoraMx(nowIso);
+
+          setStatus({
+            tone: "green",
+            qrCode: code,
+            title: "ACCESO PERMITIDO (MODO OFFLINE)",
+            attendee: updated,
+            validatedBy: validatorLabel,
+            validatedAt: when,
+            attempts: 1,
+            detail: `Validado por ${validatorLabel} · ${when}`,
+          });
+        }
+        return;
       }
 
       setStatus({
-        type: "success",
-        title: "ACCESO VÁLIDO — BIENVENIDO",
-        attendee: data?.attendee,
-        detail: `Validado por ${validatorLabel}`,
+        tone: "red",
+        qrCode: code,
+        title: "ERROR: CÓDIGO NO REGISTRADO",
+        attendee: null,
+        validatedBy: null,
+        validatedAt: null,
+        attempts: null,
+        detail:
+          payload?.message ||
+          payload?.error ||
+          err?.message ||
+          "No se encontró este pase en el registro.",
       });
-    } catch {
-      if (cached) {
-        const updated = {
-          ...cached,
-          checked_in: true,
-          checked_in_at: new Date().toISOString(),
-          validated_by: validatorLabel,
-        };
-        if (db?.attendeesCache) {
-          await db.attendeesCache.put(updated).catch(() => {});
-        }
-        setStatus({
-          type: "success",
-          title: "ACCESO VÁLIDO (MODO OFFLINE)",
-          attendee: updated,
-          detail: `Guardado localmente por ${validatorLabel}`,
-        });
-      } else {
-        setStatus({
-          type: "error",
-          title: "SIN CONEXIÓN / QR NO ENCONTRADO EN CACHÉ",
-          detail: "Espera a que sincronice la red o verifica el código.",
-        });
-      }
+    } finally {
+      inFlightRef.current = false;
+      setProcessing(false);
     }
   }
 
@@ -268,7 +260,7 @@ function ValidarContent() {
         { facingMode: "environment" },
         { fps: 10, qrbox: { width: 250, height: 250 } },
         (text) => {
-          if (active) handleDecode(text);
+          if (active) void processQr(text);
         },
         () => {},
       )
@@ -296,6 +288,13 @@ function ValidarContent() {
     };
   }, []);
 
+  const cardStyles =
+    status?.tone === "green"
+      ? "bg-emerald-600 text-white border-emerald-400"
+      : status?.tone === "yellow"
+        ? "bg-amber-400 text-zinc-950 border-amber-300"
+        : "bg-red-600 text-white border-red-400";
+
   return (
     <Shell title="Validador de Acceso QR">
       <div className="space-y-4">
@@ -303,6 +302,7 @@ function ValidarContent() {
           id="qr-reader"
           className="min-h-[240px] w-full overflow-hidden rounded-xl border bg-black"
         />
+
         {!scanning && (
           <p className="text-sm text-amber-700">
             {cameraError ||
@@ -310,23 +310,72 @@ function ValidarContent() {
           </p>
         )}
 
+        {processing && (
+          <p className="rounded-xl bg-ink/10 px-4 py-2 text-center text-sm font-semibold">
+            Verificando pase...
+          </p>
+        )}
+
         {status && (
           <div
-            className={`rounded-2xl p-6 text-white shadow-lg ${
-              status.type === "success" ? "bg-emerald-600" : "bg-red-600"
-            }`}
+            className={`rounded-2xl border-2 p-6 shadow-lg transition-colors ${cardStyles}`}
           >
-            <h2 className="text-2xl font-extrabold tracking-tight">
-              {status.title}
-            </h2>
+            <div className="flex items-start justify-between gap-2">
+              <h2 className="text-2xl font-extrabold tracking-tight">
+                {status.title}
+              </h2>
+              {status.attempts && (
+                <span className="shrink-0 rounded-full bg-black/20 px-3 py-1 text-xs font-bold uppercase">
+                  Escaneo #{status.attempts}
+                </span>
+              )}
+            </div>
+
             {status.attendee && (
               <div className="mt-3 space-y-1 text-base">
-                <p className="font-bold">{status.attendee.full_name}</p>
+                <p className="text-lg font-bold">{status.attendee.full_name}</p>
                 <p>Colonia: {status.attendee.colony}</p>
                 <p>Tel: {status.attendee.phone}</p>
               </div>
             )}
-            <p className="mt-3 text-sm opacity-95">{status.detail}</p>
+
+            <div className="mt-4 rounded-xl bg-black/15 p-3 text-sm font-medium">
+              {status.validatedBy ? (
+                <>
+                  <p>
+                    <strong>Validado por:</strong> {status.validatedBy}
+                  </p>
+                  <p>
+                    <strong>Hora de validación:</strong> {status.validatedAt}
+                  </p>
+                </>
+              ) : (
+                <p>{status.detail}</p>
+              )}
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={processing}
+                onClick={() =>
+                  void processQr(status.qrCode, { forceRevalidate: true })
+                }
+                className="rounded-xl bg-black/25 px-4 py-2.5 text-xs font-bold uppercase tracking-wide hover:bg-black/35 disabled:opacity-50"
+              >
+                Volver a verificar este QR
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  activeQrRef.current = "";
+                  setStatus(null);
+                }}
+                className="rounded-xl bg-white/25 px-4 py-2.5 text-xs font-bold uppercase tracking-wide hover:bg-white/35"
+              >
+                Limpiar pantalla
+              </button>
+            </div>
           </div>
         )}
 

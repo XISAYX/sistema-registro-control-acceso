@@ -556,7 +556,12 @@ app.post(
         return res.json({
           ok: true,
           code: "ADMITTED",
+          statusColor: "green",
+          attempts: 1,
           message: "ACCESO PERMITIDO",
+          validated_by: attendee.validated_by,
+          checked_in_at: attendee.checked_in_at,
+          checked_in_at_mx: formatMx(attendee.checked_in_at),
           attendee: attendeePayload(attendee),
         });
       }
@@ -585,6 +590,7 @@ app.post(
         return res.status(404).json({
           ok: false,
           code: "NOT_FOUND",
+          statusColor: "red",
           message: "CÓDIGO NO REGISTRADO",
         });
       }
@@ -607,11 +613,31 @@ app.post(
           attendee.id,
         ],
       );
+
+      const countRes = await client.query(
+        `
+          SELECT COUNT(*)::int AS total
+          FROM scan_log
+          WHERE qr_code = $1 AND outcome IN ('admitido', 'ya_usado')
+        `,
+        [qrCode],
+      );
+      const attempts = Math.max(countRes.rows[0]?.total || 2, 2);
+      const exceededLimit = attempts > 3;
+
       await client.query("COMMIT");
       return res.status(409).json({
         ok: false,
-        code: "ALREADY_USED",
-        message: "ERROR: ESTE CÓDIGO QR YA FUE USADO",
+        alreadyUsed: true,
+        code: exceededLimit ? "MAX_ATTEMPTS_EXCEEDED" : "ALREADY_USED",
+        statusColor: exceededLimit ? "red" : "yellow",
+        attempts,
+        message: exceededLimit
+          ? `ALERTA: MÁS DE 3 INTENTOS (${attempts} ESCANEOS)`
+          : `ESTE CÓDIGO QR YA FUE VALIDADO (INTENTO ${attempts} DE 3)`,
+        validated_by: attendee.validated_by,
+        checked_in_at: attendee.checked_in_at,
+        checked_in_at_mx: formatMx(attendee.checked_in_at),
         attendee: attendeePayload(attendee),
       });
     } catch (error) {
